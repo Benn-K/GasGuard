@@ -1,20 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
+import * as Notifications from 'expo-notifications';
 import React, { useEffect, useRef, useState } from 'react';
-import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
+import { Dimensions, ScrollView, StyleSheet, Text, Vibration, View } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, G, Line, Path, Polygon, Text as SvgText } from 'react-native-svg';
 import { useSettings } from '../../context/SettingsContext';
 
-// --- NEW: Import the notifications library ---
-import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import { onValue, ref, set } from 'firebase/database';
+import { db } from '../../firebaseConfig';
 
-// --- Tell the app how to handle notifications when it is open ---
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowBanner: true, // <--- Replaced shouldShowAlert
-    shouldShowList: true,   // <--- Added to fix the deprecation warning
+    shouldShowBanner: true, 
+    shouldShowList: true,   
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
@@ -22,7 +23,6 @@ Notifications.setNotificationHandler({
 
 const screenWidth = Dimensions.get('window').width;
 
-// --- Custom SVG Gas Gauge Component (Calibrated to 2000 ppm Alarm) ---
 const GasGauge = ({ value, max, unit, activeColor }: { value: number; max: number; unit: string; activeColor: string }) => {
   const clampedValue = Math.min(Math.max(value, 0), max);
   const rotation = (clampedValue / max) * 180;
@@ -76,26 +76,78 @@ export default function Home() {
   const { displayUnit, threshold, soundEnabled, vibrationEnabled, addLog } = useSettings();
   
   const [currentPpm, setCurrentPpm] = useState(0); 
-  
-  // --- UPDATED: Expand array to hold 24 hours of data ---
   const [graphData, setGraphData] = useState<number[]>(new Array(24).fill(0));
+  const [cloudStatus, setCloudStatus] = useState("Connecting...");
 
+  // --- UPDATED: Firebase Live Data Listener with Heartbeat Timeout ---
   useEffect(() => {
-    (async () => {
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status !== 'granted') {
-        console.log('Notification permissions not granted');
+    const sensorRef = ref(db, 'sensor/currentPpm');
+    let disconnectTimer: number | undefined;
+    
+    const unsubscribe = onValue(sensorRef, (snapshot) => {
+      const ppmValue = snapshot.val();
+      
+      if (ppmValue !== null) {
+        setCurrentPpm(ppmValue);
+        setGraphData(prev => [...prev.slice(1), ppmValue]);
+        setCloudStatus(ppmValue === 0 ? "System Off / Offline" : "Live");
+
+        // Clear the old timer because we just received fresh data
+        if (disconnectTimer) clearTimeout(disconnectTimer);
+
+        // Start a new 10-second timer.
+        if (ppmValue !== 0) {
+          disconnectTimer = setTimeout(() => {
+            setCurrentPpm(0); // Force the gauge to zero
+            setCloudStatus("Disconnected"); // Update the badge
+          }, 10000); 
+        }
+
+      } else {
+        setCloudStatus("Disconnected");
       }
-    })();
+    }, (error) => {
+      console.log("Firebase connection error: ", error);
+      setCloudStatus("Connection Error");
+    });
+
+    return () => {
+      unsubscribe();
+      if (disconnectTimer) clearTimeout(disconnectTimer);
+    };
   }, []);
 
-  // --- UPDATED: Handle 24 hours of labels with 6-hour intervals ---
+  useEffect(() => {
+    async function registerForPushNotificationsAsync() {
+      let token;
+
+      if (Device.isDevice) {
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+        
+        if (existingStatus !== 'granted') {
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
+        }
+        
+        if (finalStatus !== 'granted') {
+          console.log('Failed to get push token for push notification!');
+          return;
+        }
+        
+        token = (await Notifications.getExpoPushTokenAsync()).data;
+        set(ref(db, 'sensor/pushToken'), token);
+      }
+    }
+
+    registerForPushNotificationsAsync();
+  }, []);
+
   const getInitialLabels = () => {
     const labels = [];
     const now = new Date();
     
     for (let i = 23; i >= 0; i--) {
-      // Only show the text label every 6 hours or for the current hour
       if (i % 6 === 0 || i === 0) {
         const pastTime = new Date(now.getTime() - i * 3600000); 
         let hours = pastTime.getHours();
@@ -104,26 +156,25 @@ export default function Home() {
         hours = hours ? hours : 12; 
         labels.push(`${hours}${ampm}`);
       } else {
-        // Push an empty string so the graph point exists, but no text is drawn
         labels.push("");
       }
     }
     return labels;
   };
   
-  const [graphLabels, setGraphLabels] = useState<string[]>(getInitialLabels());
+  const [graphLabels] = useState<string[]>(getInitialLabels());
 
-  const numericThreshold = parseFloat(threshold) || 2000;
-  const isDanger = currentPpm >= numericThreshold;
+  // --- Normalized Threshold Logic to Prevent False Alarms ---
+  const numericThreshold = parseFloat(threshold) || (displayUnit === 'ppm' ? 2000 : 9.5);
+  const thresholdInPpm = displayUnit === 'ppm' ? numericThreshold : numericThreshold * 210;
+  const isDanger = currentPpm >= thresholdInPpm;
 
   const currentAmPm = new Date().getHours() >= 12 ? 'pm' : 'am';
-
   const hasLoggedAlarm = useRef(false);
 
   useEffect(() => {
     if (isDanger && !hasLoggedAlarm.current) {
       const now = new Date();
-      
       let hours = now.getHours();
       const ampm = hours >= 12 ? 'pm' : 'am';
       hours = hours % 12;
@@ -197,7 +248,6 @@ export default function Home() {
     };
   }, [isDanger, soundEnabled, vibrationEnabled]); 
 
-
   const displayValue = displayUnit === 'ppm' ? currentPpm : parseFloat((currentPpm / 210).toFixed(2));
   const gaugeMax = displayUnit === 'ppm' ? 5000 : 23.8; 
 
@@ -216,21 +266,7 @@ export default function Home() {
     statusColor = "#FF9800"; 
     statusIcon = "alert-circle";
     statusDetail = "Small leak may be present. Investigate.";
-  } else if (currentPpm > 500) {
-    statusText = "Notice: Elevated Levels";
-    statusColor = "#FFC107"; 
-    statusIcon = "information-circle";
-    statusDetail = "Gas presence is slightly above normal.";
   }
-
-  const triggerTestLeak = () => {
-    const newPpm = currentPpm === 0 ? 2500 : 0;
-    setCurrentPpm(newPpm);
-    setGraphData(prev => [...prev.slice(1), newPpm]);
-
-    // --- NEW FIX: Recalculate clean labels instead of injecting text ---
-    setGraphLabels(getInitialLabels());
-  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -243,8 +279,8 @@ export default function Home() {
         <View style={styles.headerRow}>
           <Text style={styles.headerTitle}>Gas Detection</Text>
           <View style={styles.statusBadge}>
-            <View style={[styles.statusDot, { backgroundColor: '#ccc' }]} />
-            <Text style={styles.statusText}>Disconnected</Text>
+            <View style={[styles.statusDot, { backgroundColor: cloudStatus === 'Live' ? '#4CAF50' : '#ccc' }]} />
+            <Text style={styles.statusText}>{cloudStatus}</Text>
           </View>
         </View>
 
@@ -267,11 +303,7 @@ export default function Home() {
               width={screenWidth - 60} 
               height={220}
               yAxisSuffix="" 
-              
-              // Hint: If 24 dots looks too crowded on your phone screen, 
-              // change this to withDots={false} to make it a smooth continuous line!
               withDots={true} 
-
               withOuterLines={false} 
               withInnerLines={true} 
               withHorizontalLines={true} 
@@ -282,13 +314,10 @@ export default function Home() {
                 backgroundColor: "#ffffff", 
                 backgroundGradientFrom: "#ffffff", 
                 backgroundGradientTo: "#ffffff", 
-
                 decimalPlaces: displayUnit === 'ppm' ? 0 : 1, 
-
                 color: () => `rgba(26, 26, 36, 1)`, 
                 labelColor: () => `rgba(136, 136, 136, 1)`, 
                 strokeWidth: 3, 
-
                 propsForBackgroundLines: {
                   stroke: '#E0E0E0', 
                   strokeWidth: 1, 
@@ -316,15 +345,6 @@ export default function Home() {
           <Text style={styles.statusDataText}>Alarm threshold: {threshold} {displayUnit}</Text>
         </View>
 
-        <TouchableOpacity 
-          style={[styles.testButton, isDanger && { backgroundColor: '#F44336' }]} 
-          onPress={triggerTestLeak}
-        >
-          <Text style={styles.testButtonText}>
-            {isDanger ? "Stop Leak" : "Simulate Leak (Test Alarm)"}
-          </Text>
-        </TouchableOpacity>
-
       </ScrollView>
     </SafeAreaView>
   );
@@ -348,7 +368,5 @@ const styles = StyleSheet.create({
   statusSafeText: { fontSize: 20, fontWeight: '600', marginLeft: 10 },
   statusDetail: { fontSize: 14, color: '#444', marginBottom: 10, fontWeight: '500' },
   divider: { height: 1, backgroundColor: '#eee', marginVertical: 10 },
-  statusDataText: { fontSize: 14, color: '#888', marginBottom: 4 },
-  testButton: { backgroundColor: '#1A1A24', paddingVertical: 15, borderRadius: 15, alignItems: 'center', marginTop: 10 },
-  testButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' }
+  statusDataText: { fontSize: 14, color: '#888', marginBottom: 4 }
 });

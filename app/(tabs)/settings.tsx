@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSettings } from '../../context/SettingsContext';
@@ -8,23 +8,40 @@ export default function Settings() {
     displayUnit, setDisplayUnit, 
     threshold, setThreshold,
     soundEnabled, setSoundEnabled,
-    vibrationEnabled, setVibrationEnabled
+    vibrationEnabled, setVibrationEnabled,
+    lastConnected 
   } = useSettings();
   
+  const [localThreshold, setLocalThreshold] = useState(threshold);
+
+  useEffect(() => {
+    setLocalThreshold(threshold);
+  }, [threshold]);
+
   const handleUnitToggle = (newUnit: 'LEL' | 'ppm') => {
     if (newUnit === displayUnit) return; 
 
-    const currentNum = parseFloat(threshold) || 0;
+    const currentNum = parseFloat(localThreshold) || 0;
     
     if (newUnit === 'LEL') {
-      setThreshold((currentNum / 210).toFixed(2).replace(/\.00$/, '')); 
+      const newLel = (currentNum / 210).toFixed(2).replace(/\.00$/, '');
+      setLocalThreshold(newLel);
+      setThreshold(newLel, 'LEL'); 
     } else {
       const rawPpm = currentNum * 210;
       const roundedPpm = Math.round(rawPpm / 10) * 10; 
-      setThreshold(roundedPpm.toString());
+      const newPpm = roundedPpm.toString();
+      setLocalThreshold(newPpm);
+      setThreshold(newPpm, 'ppm'); 
     }
     
     setDisplayUnit(newUnit);
+  };
+
+  const saveThreshold = () => {
+    if (localThreshold !== threshold) {
+      setThreshold(localThreshold, displayUnit);
+    }
   };
 
   return (
@@ -33,13 +50,12 @@ export default function Settings() {
         <Text style={styles.appTitle}>Settings</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         
         <View style={styles.card}>
-          
           <View style={[styles.row, { marginTop: 15 }]}>
             <Text style={styles.rowLabel}>Last connected</Text>
-            <Text style={styles.rowValue}>Not recorded</Text>
+            <Text style={styles.rowValue}>{lastConnected}</Text>
           </View>
           <Text style={styles.footerText}>
             If you need support, screenshot this page and send it to us.
@@ -73,9 +89,12 @@ export default function Settings() {
             <View style={styles.inputContainer}>
               <TextInput 
                 style={styles.input}
-                value={threshold}
-                onChangeText={setThreshold}
+                value={localThreshold}
+                onChangeText={setLocalThreshold} 
+                onEndEditing={saveThreshold}     
+                onSubmitEditing={saveThreshold}  
                 keyboardType="numeric"
+                returnKeyType="done"
               />
             </View>
             <Text style={styles.inputUnit}>{displayUnit}</Text>
@@ -130,7 +149,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#fff', borderRadius: 15, padding: 20, marginBottom: 15, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowLabel: { fontSize: 16, color: '#666' },
-  rowValue: { fontSize: 16, color: '#000' },
+  rowValue: { fontSize: 16, color: '#000', fontWeight: '500' },
   footerText: { fontSize: 13, color: '#999', marginTop: 15, lineHeight: 18 },
   cardTitle: { fontSize: 16, fontWeight: '600', marginBottom: 15, color: '#000' },
   segmentedControl: { flexDirection: 'row', backgroundColor: '#F0F0F0', borderRadius: 25, padding: 4 },
