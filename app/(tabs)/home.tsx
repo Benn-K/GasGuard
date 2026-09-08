@@ -49,15 +49,22 @@ const GasGauge = ({ value, max, unit, activeColor }: { value: number; max: numbe
   return (
     <View style={styles.gaugeContainer}>
       <Svg width="220" height="120" viewBox="0 0 200 110">
-        <Path d="M 20 100 A 80 80 0 0 1 35.28 52.98" fill="none" stroke="#4CAF50" strokeWidth="20" />
-        <Path d="M 35.28 52.98 A 80 80 0 0 1 75.28 23.9" fill="none" stroke="#FF9800" strokeWidth="20" />
+        {/* UPDATED: Green path now ends at 30% of the arc (1500 ppm) instead of 20% (1000 ppm) */}
+        <Path d="M 20 100 A 80 80 0 0 1 52.98 35.28" fill="none" stroke="#4CAF50" strokeWidth="20" />
+        {/* UPDATED: Yellow path starts at 30% and ends at 40% (2000 ppm) */}
+        <Path d="M 52.98 35.28 A 80 80 0 0 1 75.28 23.9" fill="none" stroke="#FF9800" strokeWidth="20" />
         <Path d="M 75.28 23.9 A 80 80 0 0 1 180 100" fill="none" stroke="#F44336" strokeWidth="20" />
 
         {renderTicks()}
 
         <SvgText x="40" y="102" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">0</SvgText>
-        <SvgText x="60" y="65" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">{unit === 'ppm' ? '1000' : '4.8'}</SvgText>
-        <SvgText x="80" y="50" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">{unit === 'ppm' ? '2000' : '9.5'}</SvgText>
+        
+        {/* UPDATED: Shifted coordinates to match the new line, changed LEL text to 7.1 (1500/210) */}
+        <SvgText x="65" y="50" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">{unit === 'ppm' ? '1500' : '7.1'}</SvgText>
+        
+        {/* UPDATED: Shifted coordinates slightly so it doesn't overlap the new 1500 label */}
+        <SvgText x="85" y="40" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">{unit === 'ppm' ? '2000' : '9.5'}</SvgText>
+        
         <SvgText x="150" y="102" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">{Number(max.toFixed(1))}</SvgText>
 
         <G rotation={rotation} origin="100, 100">
@@ -261,7 +268,7 @@ export default function Home() {
     statusColor = "#F44336"; 
     statusIcon = "warning";
     statusDetail = "Gas concentration has exceeded safe limits!";
-  } else if (currentPpm >= 1000) {
+  } else if (currentPpm >= 1500) {
     statusText = "Caution: Early Warning";
     statusColor = "#FF9800"; 
     statusIcon = "alert-circle";
