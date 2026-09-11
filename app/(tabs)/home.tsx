@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import React, { useEffect, useRef, useState } from 'react';
-import { Dimensions, ScrollView, StyleSheet, Text, Vibration, View } from 'react-native';
+// Added Platform to the imports
+import { Dimensions, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, G, Line, Path, Polygon, Text as SvgText } from 'react-native-svg';
@@ -49,22 +51,15 @@ const GasGauge = ({ value, max, unit, activeColor }: { value: number; max: numbe
   return (
     <View style={styles.gaugeContainer}>
       <Svg width="220" height="120" viewBox="0 0 200 110">
-        {/* UPDATED: Green path now ends at 30% of the arc (1500 ppm) instead of 20% (1000 ppm) */}
         <Path d="M 20 100 A 80 80 0 0 1 52.98 35.28" fill="none" stroke="#4CAF50" strokeWidth="20" />
-        {/* UPDATED: Yellow path starts at 30% and ends at 40% (2000 ppm) */}
         <Path d="M 52.98 35.28 A 80 80 0 0 1 75.28 23.9" fill="none" stroke="#FF9800" strokeWidth="20" />
         <Path d="M 75.28 23.9 A 80 80 0 0 1 180 100" fill="none" stroke="#F44336" strokeWidth="20" />
 
         {renderTicks()}
 
         <SvgText x="40" y="102" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">0</SvgText>
-        
-        {/* UPDATED: Shifted coordinates to match the new line, changed LEL text to 7.1 (1500/210) */}
         <SvgText x="65" y="50" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">{unit === 'ppm' ? '1500' : '7.1'}</SvgText>
-        
-        {/* UPDATED: Shifted coordinates slightly so it doesn't overlap the new 1500 label */}
         <SvgText x="85" y="40" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">{unit === 'ppm' ? '2000' : '9.5'}</SvgText>
-        
         <SvgText x="150" y="102" fill="#888" fontSize="10" textAnchor="middle" fontWeight="500">{Number(max.toFixed(1))}</SvgText>
 
         <G rotation={rotation} origin="100, 100">
@@ -85,8 +80,9 @@ export default function Home() {
   const [currentPpm, setCurrentPpm] = useState(0); 
   const [graphData, setGraphData] = useState<number[]>(new Array(24).fill(0));
   const [cloudStatus, setCloudStatus] = useState("Connecting...");
+  
+  const [isMuted, setIsMuted] = useState(false); 
 
-  // --- UPDATED: Firebase Live Data Listener with Heartbeat Timeout ---
   useEffect(() => {
     const sensorRef = ref(db, 'sensor/currentPpm');
     let disconnectTimer: number | undefined;
@@ -99,14 +95,12 @@ export default function Home() {
         setGraphData(prev => [...prev.slice(1), ppmValue]);
         setCloudStatus(ppmValue === 0 ? "System Off / Offline" : "Live");
 
-        // Clear the old timer because we just received fresh data
         if (disconnectTimer) clearTimeout(disconnectTimer);
 
-        // Start a new 10-second timer.
         if (ppmValue !== 0) {
           disconnectTimer = setTimeout(() => {
-            setCurrentPpm(0); // Force the gauge to zero
-            setCloudStatus("Disconnected"); // Update the badge
+            setCurrentPpm(0); 
+            setCloudStatus("Disconnected"); 
           }, 10000); 
         }
 
@@ -142,8 +136,29 @@ export default function Home() {
           return;
         }
         
-        token = (await Notifications.getExpoPushTokenAsync()).data;
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+        
+        if (!projectId) {
+          console.log('Project ID not found in app.json');
+          return;
+        }
+
+        token = (await Notifications.getExpoPushTokenAsync({
+          projectId: projectId,
+        })).data;
+        
         set(ref(db, 'sensor/pushToken'), token);
+
+        // --- NEW: Setup the custom Android channel for the loud remote alarm ---
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('gas-alarms', {
+            name: 'Gas Alarms',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 1000, 500, 1000],
+            lightColor: '#F44336',
+            sound: 'alarm.wav', 
+          });
+        }
       }
     }
 
@@ -171,7 +186,6 @@ export default function Home() {
   
   const [graphLabels] = useState<string[]>(getInitialLabels());
 
-  // --- Normalized Threshold Logic to Prevent False Alarms ---
   const numericThreshold = parseFloat(threshold) || (displayUnit === 'ppm' ? 2000 : 9.5);
   const thresholdInPpm = displayUnit === 'ppm' ? numericThreshold : numericThreshold * 210;
   const isDanger = currentPpm >= thresholdInPpm;
@@ -210,6 +224,7 @@ export default function Home() {
       hasLoggedAlarm.current = true; 
     } else if (!isDanger) {
       hasLoggedAlarm.current = false; 
+      setIsMuted(false); 
     }
   }, [isDanger, currentPpm, addLog]);
 
@@ -217,7 +232,7 @@ export default function Home() {
     let soundObject: Audio.Sound | null = null;
 
     const manageAlarm = async () => {
-      if (isDanger) {
+      if (isDanger && !isMuted) {
         if (vibrationEnabled) {
           Vibration.vibrate([0, 1000, 1000], true);
         }
@@ -253,7 +268,7 @@ export default function Home() {
         soundObject.unloadAsync();
       }
     };
-  }, [isDanger, soundEnabled, vibrationEnabled]); 
+  }, [isDanger, soundEnabled, vibrationEnabled, isMuted]); 
 
   const displayValue = displayUnit === 'ppm' ? currentPpm : parseFloat((currentPpm / 210).toFixed(2));
   const gaugeMax = displayUnit === 'ppm' ? 5000 : 23.8; 
@@ -293,6 +308,23 @@ export default function Home() {
 
         <View style={styles.card}>
           <GasGauge value={displayValue} max={gaugeMax} unit={displayUnit} activeColor={statusColor} />
+          
+          {isDanger && (
+            <TouchableOpacity 
+              style={[styles.stopButton, isMuted && styles.mutedButton]} 
+              onPress={() => setIsMuted(true)}
+              disabled={isMuted}
+            >
+              <Ionicons 
+                name={isMuted ? "volume-mute" : "volume-high"} 
+                size={22} 
+                color={isMuted ? "#888" : "#fff"} 
+              />
+              <Text style={[styles.stopButtonText, isMuted && styles.mutedButtonText]}>
+                {isMuted ? "Alarm Silenced" : "Stop Alarm"}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.card}>
@@ -375,5 +407,28 @@ const styles = StyleSheet.create({
   statusSafeText: { fontSize: 20, fontWeight: '600', marginLeft: 10 },
   statusDetail: { fontSize: 14, color: '#444', marginBottom: 10, fontWeight: '500' },
   divider: { height: 1, backgroundColor: '#eee', marginVertical: 10 },
-  statusDataText: { fontSize: 14, color: '#888', marginBottom: 4 }
+  statusDataText: { fontSize: 14, color: '#888', marginBottom: 4 },
+  stopButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F44336', 
+    marginTop: 15,
+    paddingVertical: 12,
+    borderRadius: 10,
+    gap: 8,
+  },
+  stopButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  mutedButton: {
+    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  mutedButtonText: {
+    color: '#888',
+  },
 });

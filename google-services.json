@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "477887944563",
+    "firebase_url": "https://gasguard-89aac-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "gasguard-89aac",
+    "storage_bucket": "gasguard-89aac.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:477887944563:android:6e69a6bb5f978ec8399706",
+        "android_client_info": {
+          "package_name": "com.ben_k.GasLeakDetector"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDZqpWwYHH7FRWUOAV0K3VuCo9_b5YQB8I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

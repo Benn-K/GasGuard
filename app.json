@@ -16,7 +16,8 @@
         "foregroundImage": "./assets/images/android-icon-background.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.ben_k.GasLeakDetector"
+      "package": "com.ben_k.GasLeakDetector",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
@@ -24,6 +25,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-notifications",
+        {
+          "sounds": ["./assets/alarm.wav"]
+        }
+      ],
       [
         "expo-splash-screen",
         {
